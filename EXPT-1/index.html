@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Linear Regression Calculator</title>
+</head>
+
+<body>
+    <h1>Regression Calculator</h1>
+
+    <div>
+        <label for="xInput">X Values:</label><br>
+        <input type="text" id="xInput" size="50"><br><br>
+
+        <label for="yInput">Y Values:</label><br>
+        <input type="text" id="yInput" size="50"><br><br>
+
+        <button id="btnSubmit">Submit</button>
+        <button id="btnReset">Reset</button>
+        <button id="btnVisualise">Visualise</button>
+    </div>
+
+    <div id="errorDisplay" style="color: red; margin-top: 10px; font-weight: bold;"></div>
+
+    <h2>Results</h2>
+    <div>
+        <p><strong>Equation:</strong> <span id="eqDisplay">—</span></p>
+        <p><strong>Mean Absolute Error (MAE):</strong> <span id="maeVal">—</span></p>
+        <p><strong>Mean Squared Error (MSE):</strong> <span id="mseVal">—</span></p>
+        <p><strong>Root Mean Squared Error (RMSE):</strong> <span id="rmseVal">—</span></p>
+        <p><strong>R-squared (R²):</strong> <span id="r2Val">—</span></p>
+    </div>
+
+    <h2>Visualization</h2>
+    <div id="metricsGraphContainer" style="display: none; width: 900px; margin-top: 15px;">
+        <img id="metricsGraphImg" alt="Regression and Evaluation Dashboard"
+            style="max-width: 100%; height: auto; border: 1px solid #ccc;" />
+    </div>
+    <div id="metricsGraphFallback" style="display: none; color: rgb(255, 0, 0); margin-top: 10px;">
+        The Matplotlib visualization is only generated and served when running via the Python Flask server.
+    </div>
+
+    <script>
+        const xInput = document.getElementById('xInput');
+        const yInput = document.getElementById('yInput');
+        const btnSubmit = document.getElementById('btnSubmit');
+        const btnReset = document.getElementById('btnReset');
+        const btnVisualise = document.getElementById('btnVisualise');
+        const errorDisplay = document.getElementById('errorDisplay');
+
+        const eqDisplay = document.getElementById('eqDisplay');
+        const maeVal = document.getElementById('maeVal');
+        const mseVal = document.getElementById('mseVal');
+        const rmseVal = document.getElementById('rmseVal');
+        const r2Val = document.getElementById('r2Val');
+        const metricsGraphContainer = document.getElementById('metricsGraphContainer');
+        const metricsGraphImg = document.getElementById('metricsGraphImg');
+        const metricsGraphFallback = document.getElementById('metricsGraphFallback');
+
+        let calculatedState = null;
+
+        btnSubmit.addEventListener('click', () => calculateResults(false));
+        btnReset.addEventListener('click', resetAll);
+        btnVisualise.addEventListener('click', visualiseResults);
+
+        // Reset state on input changes so we recompute if inputs change
+        xInput.addEventListener('input', () => { calculatedState = null; });
+        yInput.addEventListener('input', () => { calculatedState = null; });
+
+        function parseInputs() {
+            errorDisplay.textContent = '';
+
+            const rawX = xInput.value.trim();
+            const rawY = yInput.value.trim();
+
+            if (!rawX || !rawY) {
+                throw new Error("Please enter both X and Y values.");
+            }
+
+            const x = rawX.split(',').map(s => s.trim()).filter(s => s !== '').map(Number);
+            const y = rawY.split(',').map(s => s.trim()).filter(s => s !== '').map(Number);
+
+            if (x.some(isNaN) || y.some(isNaN)) {
+                throw new Error("Inputs must contain only valid numbers separated by commas.");
+            }
+
+            if (x.length !== y.length) {
+                throw new Error(`Length mismatch: X has ${x.length} values, Y has ${y.length} values.`);
+            }
+
+            if (x.length !== 4) {
+                throw new Error(`Exactly 4 data points are required. Currently, you have entered ${x.length}.`);
+            }
+
+            return { x, y };
+        }
+
+        async function calculateResults(showGraph = false) {
+            try {
+                errorDisplay.textContent = '';
+
+                const { x, y } = parseInputs();
+
+                if (window.location.protocol.startsWith('http')) {
+                    try {
+                        const response = await fetch('/calculate', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({ x, y })
+                        });
+
+                        const data = await response.json();
+                        if (data.status === 'error') {
+                            throw new Error(data.message);
+                        }
+
+                        const m = data.m;
+                        const c = data.c;
+                        const cSign = c >= 0 ? '+' : '-';
+                        eqDisplay.textContent = `y = ${m.toFixed(4)}x ${cSign} ${Math.abs(c).toFixed(4)}`;
+                        maeVal.textContent = data.mae.toFixed(6);
+                        mseVal.textContent = data.mse.toFixed(6);
+                        rmseVal.textContent = data.rmse.toFixed(6);
+                        r2Val.textContent = isFinite(data.r_squared) ? data.r_squared.toFixed(6) : "—";
+
+                        if (data.metrics_graph) {
+                            metricsGraphImg.src = `data:image/png;base64,${data.metrics_graph}`;
+                            if (showGraph === true) {
+                                metricsGraphContainer.style.display = 'block';
+                                metricsGraphFallback.style.display = 'none';
+                            } else {
+                                metricsGraphContainer.style.display = 'none';
+                                metricsGraphFallback.style.display = 'none';
+                            }
+                        } else {
+                            metricsGraphContainer.style.display = 'none';
+                            if (showGraph === true) {
+                                metricsGraphFallback.style.display = 'block';
+                            } else {
+                                metricsGraphFallback.style.display = 'none';
+                            }
+                        }
+
+                        calculatedState = { x, y, m, c };
+                        return;
+                    } catch (e) {
+                        console.warn("Python backend request failed, falling back to local JS calculation:", e);
+                    }
+                }
+
+                // Fallback to local JS calculation
+                metricsGraphContainer.style.display = 'none';
+                if (showGraph === true) {
+                    metricsGraphFallback.style.display = 'block';
+                } else {
+                    metricsGraphFallback.style.display = 'none';
+                }
+
+                const n = x.length;
+                
+                let sumX = 0;
+                let sumY = 0;
+                let sumXY = 0;
+                let sumXX = 0;
+                for (let i = 0; i < n; i++) {
+                    sumX += x[i];
+                    sumY += y[i];
+                    sumXY += x[i] * y[i];
+                    sumXX += x[i] * x[i];
+                }
+                
+                const denominator = (n * sumXX) - (sumX * sumX);
+                if (denominator === 0) {
+                    throw new Error("Cannot calculate regression slope (denominator is 0).");
+                }
+                
+                const m = ((n * sumXY) - (sumX * sumY)) / denominator;
+                const c = (sumY - (m * sumX)) / n;
+                
+                const yPred = [];
+                for (let i = 0; i < n; i++) {
+                    yPred.push(m * x[i] + c);
+                }
+                
+                let maeSum = 0;
+                let mseSum = 0;
+                for (let i = 0; i < n; i++) {
+                    const error = y[i] - yPred[i];
+                    maeSum += Math.abs(error);
+                    mseSum += Math.pow(error, 2);
+                }
+                
+                const mae = maeSum / n;
+                const mse = mseSum / n;
+                const rmse = Math.sqrt(mse);
+                
+                let sumY_val = 0;
+                for (let i = 0; i < n; i++) {
+                    sumY_val += y[i];
+                }
+                const meanY = sumY_val / n;
+                
+                let ss_res = 0;
+                let ss_tot = 0;
+                for (let i = 0; i < n; i++) {
+                    ss_res += Math.pow(y[i] - yPred[i], 2);
+                    ss_tot += Math.pow(y[i] - meanY, 2);
+                }
+                
+                let r2;
+                if (ss_tot === 0) {
+                    r2 = ss_res === 0 ? 1.0 : -Infinity;
+                } else {
+                    r2 = 1.0 - (ss_res / ss_tot);
+                }
+
+                const cSign = c >= 0 ? '+' : '-';
+                eqDisplay.textContent = `y = ${m.toFixed(4)}x ${cSign} ${Math.abs(c).toFixed(4)}`;
+                maeVal.textContent = mae.toFixed(6);
+                mseVal.textContent = mse.toFixed(6);
+                rmseVal.textContent = rmse.toFixed(6);
+                r2Val.textContent = isFinite(r2) ? r2.toFixed(6) : "—";
+
+                calculatedState = { x, y, m, c };
+
+            } catch (err) {
+                errorDisplay.textContent = err.message;
+                clearResultsDisplay();
+            }
+        }
+
+        async function visualiseResults() {
+            try {
+                if (!calculatedState) {
+                    await calculateResults(true);
+                } else {
+                    if (window.location.protocol.startsWith('http')) {
+                        metricsGraphContainer.style.display = 'block';
+                        metricsGraphFallback.style.display = 'none';
+                    } else {
+                        metricsGraphContainer.style.display = 'none';
+                        metricsGraphFallback.style.display = 'block';
+                    }
+                }
+            } catch (err) {
+                errorDisplay.textContent = err.message;
+            }
+        }
+
+        function clearResultsDisplay() {
+            eqDisplay.textContent = '—';
+            maeVal.textContent = '—';
+            mseVal.textContent = '—';
+            rmseVal.textContent = '—';
+            r2Val.textContent = '—';
+            calculatedState = null;
+            metricsGraphContainer.style.display = 'none';
+            metricsGraphFallback.style.display = 'none';
+            metricsGraphImg.removeAttribute('src');
+        }
+
+        function resetAll() {
+            xInput.value = '';
+            yInput.value = '';
+            errorDisplay.textContent = '';
+            clearResultsDisplay();
+        }
+    </script>
+</body>
+
+</html>
